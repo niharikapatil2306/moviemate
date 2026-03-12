@@ -71,3 +71,13 @@ export async function leaveRoom(req: AuthRequest, res: Response): Promise<void> 
     res.status(400).json({ message });
   }
 }
+
+export async function deleteRoom(req: AuthRequest, res: Response): Promise<void> {
+  try {
+    const result = await roomsService.deleteRoom(Number(req.params.id), req.userId!);
+    res.json(result);
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Failed to delete room';
+    res.status(403).json({ message });
+  }
+}

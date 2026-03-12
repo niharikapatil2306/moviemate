@@ -1,3 +1,5 @@
+CREATE EXTENSION IF NOT EXISTS vector;
+
 CREATE TABLE IF NOT EXISTS users (
   id SERIAL PRIMARY KEY,
   username VARCHAR(50) UNIQUE NOT NULL,
@@ -21,6 +23,17 @@ CREATE TABLE IF NOT EXISTS room_members (
   user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
   joined_at TIMESTAMP DEFAULT NOW(),
   UNIQUE(room_id, user_id)
+);
+
+CREATE TABLE IF NOT EXISTS room_genres (
+  room_id INTEGER REFERENCES rooms(id) ON DELETE CASCADE,
+  genre_id INTEGER NOT NULL,
+  PRIMARY KEY (room_id, genre_id)
+);
+
+CREATE TABLE IF NOT EXISTS movie_vectors (
+  movie_id INTEGER PRIMARY KEY,
+  embedding vector(20) NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS swipes (

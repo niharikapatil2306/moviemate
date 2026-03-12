@@ -44,11 +44,15 @@ export const api = {
     updateStatus: (id: number, status: string) =>
       request(`/rooms/${id}/status`, { method: 'PATCH', body: JSON.stringify({ status }) }),
     leave: (id: number) => request(`/rooms/${id}/leave`, { method: 'DELETE' }),
+    delete: (id: number) => request(`/rooms/${id}`, { method: 'DELETE' }),
   },
   movies: {
-    list: () => request('/movies'),
+    list: (roomId?: number) => request(`/movies${roomId ? `?roomId=${roomId}` : ''}`),
     swipe: (roomId: number, movieId: number, direction: 'like' | 'dislike') =>
       request(`/rooms/${roomId}/swipe`, { method: 'POST', body: JSON.stringify({ movieId, direction }) }),
     matches: (roomId: number) => request(`/rooms/${roomId}/matches`),
+    setGenres: (roomId: number, genreIds: number[]) =>
+      request(`/rooms/${roomId}/genres`, { method: 'POST', body: JSON.stringify({ genreIds }) }),
+    getGenres: (roomId: number) => request(`/rooms/${roomId}/genres`),
   },
 };

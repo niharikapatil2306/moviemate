@@ -21,7 +21,7 @@ export async function createRoom(name: string, userId: number) {
 export async function joinRoom(code: string, userId: number) {
   const room = await pool.query('SELECT * FROM rooms WHERE code = $1', [code]);
   if (!room.rows[0]) throw new Error('Room not found');
-  if (room.rows[0].status !== 'waiting') throw new Error('Room is no longer accepting members');
+  if (room.rows[0].status === 'done') throw new Error('This session has already ended');
 
   const alreadyMember = await pool.query(
     'SELECT id FROM room_members WHERE room_id = $1 AND user_id = $2',
@@ -94,4 +94,12 @@ export async function leaveRoom(roomId: number, userId: number) {
   );
   if (!member.rows[0]) throw new Error('Not a member of this room');
   return { message: 'Left room' };
+}
+
+export async function deleteRoom(roomId: number, userId: number) {
+  const room = await pool.query('SELECT host_id FROM rooms WHERE id = $1', [roomId]);
+  if (!room.rows[0]) throw new Error('Room not found');
+  if (room.rows[0].host_id !== userId) throw new Error('Only the host can delete this room');
+  await pool.query('DELETE FROM rooms WHERE id = $1', [roomId]);
+  return { message: 'Room deleted' };
 }

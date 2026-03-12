@@ -11,10 +11,16 @@ const swipeSchema = z.object({
   direction: z.enum(['like', 'dislike']),
 });
 
+const genreSchema = z.object({
+  genreIds: z.array(z.number().int()).min(1),
+});
+
 router.use(authenticate);
 
 router.get('/movies', swipeController.getMovies);
 router.post('/rooms/:id/swipe', validate(swipeSchema), swipeController.swipe);
 router.get('/rooms/:id/matches', swipeController.getMatches);
+router.post('/rooms/:id/genres', validate(genreSchema), swipeController.setGenres);
+router.get('/rooms/:id/genres', swipeController.getGenres);
 
 export default router;

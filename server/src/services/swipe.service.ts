@@ -1,4 +1,5 @@
 import pool from '../config/db';
+import { computeVector, storeVector, getRecommended, getRoomGenres } from './recommendation.service';
 
 const TMDB_BASE = 'https://api.themoviedb.org/3';
 
@@ -16,9 +17,11 @@ interface TMDBMovie {
   release_date: string;
   genre_ids: number[];
   poster_path: string;
+  popularity: number;
+  vote_average: number;
 }
 
-interface Movie {
+export interface Movie {
   id: number;
   title: string;
   year: number;
@@ -27,39 +30,100 @@ interface Movie {
   poster: string;
 }
 
-let cache: Movie[] | null = null;
+let cache: TMDBMovie[] | null = null;
+let cacheExpiry = 0;
+const CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
 
-async function fetchMovies(): Promise<Movie[]> {
-  if (cache) return cache;
+async function fetchTMDB(): Promise<TMDBMovie[]> {
+  if (cache && Date.now() < cacheExpiry) return cache;
 
   const key = process.env.TMDB_API_KEY;
   if (!key) throw new Error('TMDB_API_KEY is not set in .env');
 
+  const endpoints = [
+    ...([1, 2, 3, 4, 5].map((p) => `${TMDB_BASE}/movie/popular?api_key=${key}&language=en-US&page=${p}`)),
+    ...([1, 2, 3].map((p) => `${TMDB_BASE}/movie/top_rated?api_key=${key}&language=en-US&page=${p}`)),
+    ...([1, 2, 3].map((p) => `${TMDB_BASE}/movie/now_playing?api_key=${key}&language=en-US&page=${p}`)),
+    ...([1, 2, 3].map((p) => `${TMDB_BASE}/movie/upcoming?api_key=${key}&language=en-US&page=${p}`)),
+  ];
+
   const pages = await Promise.all(
-    [1, 2, 3].map((page) =>
-      fetch(`${TMDB_BASE}/movie/popular?api_key=${key}&language=en-US&page=${page}`)
+    endpoints.map((url) =>
+      fetch(url)
         .then((r) => r.json())
-        .then((data) => data.results as TMDBMovie[])
+        .then((data) => (data as { results: TMDBMovie[] }).results)
     )
   );
 
-  cache = pages
-    .flat()
-    .filter((m) => m.poster_path && m.overview)
-    .map((m) => ({
-      id: m.id,
-      title: m.title,
-      year: new Date(m.release_date).getFullYear(),
-      genre: GENRE_MAP[m.genre_ids[0]] || 'Other',
-      description: m.overview,
-      poster: m.poster_path,
-    }));
+  const seen = new Set<number>();
+  cache = pages.flat().filter((m) => {
+    if (!m.poster_path || !m.overview || seen.has(m.id)) return false;
+    seen.add(m.id);
+    return true;
+  }).slice(0, 50);
+  cacheExpiry = Date.now() + CACHE_TTL_MS;
+
+  // Store vectors for all movies (fire and forget)
+  cache.forEach((m) => {
+    const vec = computeVector(m.genre_ids, m.popularity, m.vote_average);
+    storeVector(m.id, vec).catch(() => {});
+  });
 
   return cache;
 }
 
-export async function getMovies(): Promise<Movie[]> {
-  return fetchMovies();
+function toMovie(m: TMDBMovie): Movie {
+  return {
+    id: m.id,
+    title: m.title,
+    year: new Date(m.release_date).getFullYear(),
+    genre: GENRE_MAP[m.genre_ids[0]] || 'Other',
+    description: m.overview,
+    poster: m.poster_path,
+  };
+}
+
+export async function getMovies(roomId?: number, userId?: number): Promise<Movie[]> {
+  const all = await fetchTMDB();
+
+  let filtered = all;
+
+  // Filter by room genres if set
+  if (roomId) {
+    const genreIds = await getRoomGenres(roomId);
+    if (genreIds.length > 0) {
+      filtered = all.filter((m) => m.genre_ids.some((g) => genreIds.includes(g)));
+    }
+  }
+
+  // Filter out already-swiped movies for this user
+  if (roomId && userId) {
+    const swiped = await pool.query(
+      'SELECT movie_id, direction FROM swipes WHERE user_id = $1 AND room_id = $2',
+      [userId, roomId]
+    );
+    const swipedIds = new Set(swiped.rows.map((r: { movie_id: number }) => r.movie_id));
+
+    // Unswiped genre-filtered movies
+    let remaining = filtered.filter((m) => !swipedIds.has(m.id));
+
+    // If genre-filtered pool exhausted, fall back to unswiped from full pool
+    if (remaining.length === 0 && filtered.length < all.length) {
+      remaining = all.filter((m) => !swipedIds.has(m.id));
+    }
+
+    filtered = remaining;
+  }
+
+  // Sort by vector similarity if user has liked movies
+  if (roomId && userId) {
+    const candidateIds = filtered.map((m) => m.id);
+    const ranked = await getRecommended(roomId, userId, candidateIds);
+    const movieMap = new Map(filtered.map((m) => [m.id, m]));
+    filtered = ranked.map((id) => movieMap.get(id)!).filter(Boolean);
+  }
+
+  return filtered.map(toMovie);
 }
 
 export async function swipe(userId: number, roomId: number, movieId: number, direction: 'like' | 'dislike') {
@@ -73,13 +137,13 @@ export async function swipe(userId: number, roomId: number, movieId: number, dir
   if (!room.rows[0]) throw new Error('Room not found');
   if (room.rows[0].status !== 'swiping') throw new Error('Room is not in swiping mode');
 
-  const movies = await fetchMovies();
-  if (!movies.find((m) => m.id === movieId)) throw new Error('Movie not found');
+  const all = await fetchTMDB();
+  if (!all.find((m) => m.id === movieId)) throw new Error('Movie not found');
 
   await pool.query(
     `INSERT INTO swipes (user_id, room_id, movie_id, direction)
      VALUES ($1, $2, $3, $4)
-     ON CONFLICT (user_id, room_id, movie_id) DO UPDATE SET direction = $4`,
+     ON CONFLICT (user_id, room_id, movie_id) DO UPDATE SET direction = $4, created_at = NOW()`,
     [userId, roomId, movieId, direction]
   );
 
@@ -108,6 +172,6 @@ export async function getMatches(roomId: number, userId: number) {
   );
 
   const matchedIds = result.rows.map((r: { movie_id: number }) => r.movie_id);
-  const movies = await fetchMovies();
-  return movies.filter((m) => matchedIds.includes(m.id));
+  const all = await fetchTMDB();
+  return all.filter((m) => matchedIds.includes(m.id)).map(toMovie);
 }

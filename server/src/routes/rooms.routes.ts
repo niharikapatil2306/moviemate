@@ -19,5 +19,6 @@ router.get('/:id', roomsController.getRoomById);
 router.get('/:id/members', roomsController.getRoomMembers);
 router.patch('/:id/status', validate(statusSchema), roomsController.updateRoomStatus);
 router.delete('/:id/leave', roomsController.leaveRoom);
+router.delete('/:id', roomsController.deleteRoom);
 
 export default router;

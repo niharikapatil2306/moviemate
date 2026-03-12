@@ -5,7 +5,12 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        brand: '#E50914',
+        brand: '#eaa0a2',
+        'brand-light': '#ffdbdc',
+        surface: '#3a4664',
+        'surface-light': '#4a5674',
+        'surface-dark': '#2d3552',
+        muted: '#aaaaaa',
       },
     },
   },
